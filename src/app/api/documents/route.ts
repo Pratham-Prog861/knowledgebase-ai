@@ -1,71 +1,69 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
+import { databasesServer as databases, DATABASE_ID, DOCUMENTS_TABLE_ID } from '@/lib/appwrite-server';
+import { KnowledgeDocument } from '@/types';
+import { Query, ID } from 'node-appwrite';
 
-// This is a simplified example - in a real app, you'd fetch from your database
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const type = searchParams.get('type');
+  const { searchParams } = new URL(request.url); 
+  const type = searchParams.get('type') as 'file' | 'web' | undefined;
   
-  // Get user ID from Clerk
   const { userId } = await auth();
-  
   if (!userId) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    // In a real app, you would fetch documents from your database
-    // For now, we'll use localStorage as a fallback
-    interface Document {
-      id: string;
-      title: string;
-      type: 'file' | 'web';
-      source: string;
-      lastUpdated: string;
-      [key: string]: unknown;
-    }
-    
-    let documents: Document[] = [];
-    
-    if (typeof window !== 'undefined') {
-      const savedDocs = localStorage.getItem('kbai:documents');
-      if (savedDocs) {
-        try {
-          const parsedDocs = JSON.parse(savedDocs);
-          // Ensure we have an array with the required fields
-          if (Array.isArray(parsedDocs)) {
-            documents = parsedDocs.filter(
-              (doc): doc is Document => 
-                doc && 
-                typeof doc === 'object' &&
-                'id' in doc &&
-                'title' in doc &&
-                'type' in doc &&
-                'source' in doc &&
-                'lastUpdated' in doc &&
-                (doc.type === 'file' || doc.type === 'web')
-            );
-          }
-        } catch (error) {
-          console.error('Error parsing documents from localStorage:', error);
-        }
-      }
-    }
+    const queries = [Query.equal('userId', userId)];
+    if (type) queries.push(Query.equal('type', type));
 
-    // Filter by type if specified
-    if (type) {
-      documents = documents.filter(doc => doc.type === type);
-    }
+    const result = await databases.listDocuments<KnowledgeDocument>(
+      DATABASE_ID,
+      DOCUMENTS_TABLE_ID,
+      queries
+    );
+
+    const documents: KnowledgeDocument[] = result.documents;
 
     return NextResponse.json(documents);
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error fetching documents:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch documents' },
-      { status: 500 }
+    return NextResponse.json({ error: 'Failed to fetch documents', message }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json();
+    const { title, type, source, content } = body as { title: string; type: 'file' | 'web'; source: string; content?: string };
+
+    if (!title || !type || !source) {
+      return NextResponse.json({ error: 'Missing required fields: title, type, source' }, { status: 400 });
+    }
+
+    const created = await databases.createDocument<KnowledgeDocument>(
+      DATABASE_ID,
+      DOCUMENTS_TABLE_ID,
+      ID.unique(),
+      {
+        title,
+        type,
+        source,
+        content: content || '',
+        userId,
+      }
     );
+
+    return NextResponse.json(created);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error creating document:', error);
+    return NextResponse.json({ error: 'Failed to create document', message }, { status: 500 });
   }
 }

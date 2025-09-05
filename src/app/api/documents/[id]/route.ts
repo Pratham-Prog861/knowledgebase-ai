@@ -1,14 +1,8 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-
-interface Document {
-  id: string;
-  title: string;
-  type: 'file' | 'web';
-  source: string;
-  lastUpdated: string;
-  content?: string;
-}
+import { databasesServer as databases, DATABASE_ID, DOCUMENTS_TABLE_ID } from "@/lib/appwrite-server";
+import { KnowledgeDocument } from "@/types";
 
 export async function GET(
   request: NextRequest,
@@ -20,28 +14,34 @@ export async function GET(
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-    // In a real app, you would fetch the document from your database
-    // For now, we'll use localStorage as a fallback
-    let document: Document | null = null;
-    
-    if (typeof window !== 'undefined') {
-      const savedDocs = localStorage.getItem('kbai:documents');
-      if (savedDocs) {
-        const documents: Document[] = JSON.parse(savedDocs);
-        document = documents.find(doc => doc.id === params.id) || null;
-      }
+    // Fetch row from Appwrite SQL tables
+    const document = await (databases as any).getRow(
+      DATABASE_ID,
+      DOCUMENTS_TABLE_ID,
+      params.id
+    );
+
+    // Check if user owns this document
+    if (document.userId !== userId) {
+      return new NextResponse("Forbidden", { status: 403 });
     }
 
-    if (!document) {
-      return new NextResponse("Document not found", { status: 404 });
-    }
-
-    // If it's a web document, fetch the content
+    // If it's a web document and content is missing, fetch it
     if (document.type === 'web' && !document.content) {
       try {
-        const response = await fetch(`/api/fetch-url?url=${encodeURIComponent(document.source)}`);
+        const response = await fetch(`${request.nextUrl.origin}/api/fetch-url?url=${encodeURIComponent(document.source)}`);
         if (response.ok) {
           const data = await response.json();
+          // Update the document with fetched content
+          await (databases as any).updateRow(
+            DATABASE_ID,
+            DOCUMENTS_TABLE_ID,
+            params.id,
+            {
+              content: data.content,
+              lastUpdated: new Date().toISOString(),
+            }
+          );
           document.content = data.content;
         }
       } catch (error) {
@@ -49,9 +49,103 @@ export async function GET(
       }
     }
 
-    return NextResponse.json(document);
+    // Transform to match frontend interface
+    const transformedDocument: KnowledgeDocument = {
+      $id: document.$id,
+      title: document.title,
+      type: document.type,
+      source: document.source,
+      content: document.content,
+      lastUpdated: document.lastUpdated,
+      userId: document.userId,
+      $createdAt: document.$createdAt,
+      $updatedAt: document.$updatedAt,
+    };
+
+    return NextResponse.json(transformedDocument);
   } catch (error) {
     console.error('Error fetching document:', error);
+    if (error instanceof Error && error.message.includes('Document with the requested ID could not be found')) {
+      return new NextResponse("Document not found", { status: 404 });
+    }
+    return new NextResponse("Internal Server Error", { status: 500 });
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return new NextResponse("Unauthorized", { status: 401 });
+    }
+
+    const body = await request.json();
+    const { title, content } = body;
+
+    // Check if user owns this document
+    const existingDoc = await (databases as any).getRow(
+      DATABASE_ID,
+      DOCUMENTS_TABLE_ID,
+      params.id
+    );
+
+    if (existingDoc.userId !== userId) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+
+    // Update document
+    const updatedDocument = await (databases as any).updateRow(
+      DATABASE_ID,
+      DOCUMENTS_TABLE_ID,
+      params.id,
+      {
+        title: title || existingDoc.title,
+        content: content || existingDoc.content,
+        lastUpdated: new Date().toISOString(),
+      }
+    );
+
+    return NextResponse.json(updatedDocument);
+  } catch (error) {
+    console.error('Error updating document:', error);
+    return new NextResponse("Internal Server Error", { status: 500 });
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return new NextResponse("Unauthorized", { status: 401 });
+    }
+
+    // Check if user owns this document
+    const existingDoc = await (databases as any).getRow(
+      DATABASE_ID,
+      DOCUMENTS_TABLE_ID,
+      params.id
+    );
+
+    if (existingDoc.userId !== userId) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+
+    // Delete document
+    await (databases as any).deleteRow(
+      DATABASE_ID,
+      DOCUMENTS_TABLE_ID,
+      params.id
+    );
+
+    return new NextResponse("Document deleted", { status: 200 });
+  } catch (error) {
+    console.error('Error deleting document:', error);
     return new NextResponse("Internal Server Error", { status: 500 });
   }
 }

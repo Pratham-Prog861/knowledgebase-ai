@@ -11,8 +11,10 @@
   "dependencies": {
     "@clerk/nextjs": "^6.31.9",
     "@google/generative-ai": "^0.24.1",
+    "appwrite": "^19.0.0",
     "lucide-react": "^0.542.0",
     "next": "15.5.2",
+    "node-appwrite": "^18.0.0",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
@@ -22,6 +24,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.2.2",
     "eslint": "^9",
     "eslint-config-next": "15.5.2",
     "tailwindcss": "^4",

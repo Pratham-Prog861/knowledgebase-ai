@@ -5,7 +5,7 @@ import { Card } from "@/components/Card";
 import { Modal } from "@/components/Modal";
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
-import { Plus, Upload, Link as LinkIcon, Search, ArrowRight } from "lucide-react";
+import { Plus, Upload, Link as LinkIcon, ArrowRight } from "lucide-react";
 
 export default function DashboardPage() {
   const { isSignedIn, isLoaded, user } = useUser();
@@ -30,26 +30,35 @@ export default function DashboardPage() {
     lastUpdated: string;
   }>>([]);
 
-  // Load documents from localStorage on component mount
+  // Fetch documents from backend when user is authenticated
   useEffect(() => {
-    try {
-      const savedDocs = localStorage.getItem('kbai:documents');
-      if (savedDocs) {
-        setDocuments(JSON.parse(savedDocs));
+    if (!isLoaded || !isSignedIn) return;
+    const fetchDocuments = async () => {
+      try {
+        const res = await fetch('/api/documents');
+        if (!res.ok) {
+          let detail = '';
+          try {
+            const err = await res.json();
+            detail = err?.error || JSON.stringify(err);
+          } catch {}
+          throw new Error(`Failed to fetch documents (${res.status}): ${detail}`);
+        }
+        const data: Array<{ $id: string; title: string; type: 'file' | 'web'; source: string; lastUpdated: string; }> = await res.json();
+        const mapped = data.map(d => ({
+          id: d.$id,
+          title: d.title,
+          type: d.type,
+          source: d.source,
+          lastUpdated: d.lastUpdated,
+        }));
+        setDocuments(mapped);
+      } catch (error) {
+        console.error('Failed to fetch documents:', error);
       }
-    } catch (error) {
-      console.error('Failed to load documents:', error);
-    }
-  }, []);
-
-  // Save documents to localStorage whenever they change
-  useEffect(() => {
-    try {
-      localStorage.setItem('kbai:documents', JSON.stringify(documents));
-    } catch (error) {
-      console.error('Failed to save documents:', error);
-    }
-  }, [documents]);
+    };
+    fetchDocuments();
+  }, [isLoaded, isSignedIn]);
   
   // Calculate counts based on current documents
   const counts = {
@@ -90,7 +99,7 @@ export default function DashboardPage() {
     });
   };
 
-  // Handle adding a new web link
+  // Handle adding a new web link (persist to backend)
   const handleAddLink = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -100,42 +109,33 @@ export default function DashboardPage() {
     }
 
     try {
-      // In a real app, you would make an API call to save the link
-      // const response = await fetch('/api/links', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ url: linkUrl })
-      // });
-      // const data = await response.json();
-      
-      try {
-        const url = new URL(linkUrl);
-        const newDoc = {
-          id: `doc-${Date.now()}`,
-          title: url.hostname,
-          type: 'web' as const,
-          source: linkUrl,
-          lastUpdated: new Date().toISOString()
-        };
-        
-        // Update state and show success message
-        setDocuments(prev => [newDoc, ...prev]);
-        // alert(`Successfully added link: ${newDoc.title}`);
-      } catch (error) {
-        console.error('Error adding link:', error);
-        setLinkError("Invalid URL. Please enter a valid web address starting with http:// or https://");
-        return;
+      const url = new URL(linkUrl);
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: url.hostname, type: 'web', source: linkUrl }),
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const err = await response.json();
+          detail = err?.message || err?.error || JSON.stringify(err);
+        } catch {}
+        throw new Error(`Failed to add link (${response.status}): ${detail}`);
       }
+      const created: { $id: string; title: string; type: 'file' | 'web'; source: string; lastUpdated: string } = await response.json();
+      const newDoc = { id: created.$id, title: created.title, type: created.type, source: created.source, lastUpdated: created.lastUpdated };
+      setDocuments(prev => [newDoc, ...prev]);
       setLinkUrl("");
       setLinkError("");
       setLinkOpen(false);
     } catch (error) {
       console.error('Error adding link:', error);
-      setLinkError("Invalid URL. Please enter a valid web address.");
+      setLinkError("Invalid URL or failed to save. Please enter a valid web address.");
     }
   };
 
-  // Handle file upload
+  // Handle file upload (persist to backend)
   const handleFileUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -148,54 +148,44 @@ export default function DashboardPage() {
     }
     
     try {
-      // Convert file to base64 for storage
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          // Remove data URL prefix to get just the base64 string
-          const base64String = result.split(',')[1];
-          resolve(base64String);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      
-      // Create new document
-      const newDoc = {
-        id: `doc-${Date.now()}`,
-        title: uploadTitle || file.name.replace(/\.[^/.]+$/, ""),
-        type: 'file' as const,
-        source: file.name,
-        lastUpdated: new Date().toISOString()
-      };
-      
-      // Store file content in localStorage for AI analysis
-      const docId = newDoc.id;
-      localStorage.setItem(`kbai:doc:${docId}:file`, base64);
-      localStorage.setItem(`kbai:doc:${docId}:mime`, file.type);
-      
-      // For PDFs, we'll let the AI analyze the file directly
-      // For text files, we can extract text content
+      // Extract text content for simple text files
+      let content: string | undefined = undefined;
       if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.md')) {
-        const textContent = await new Promise<string>((resolve, reject) => {
+        content = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = reject;
           reader.readAsText(file);
         });
-        localStorage.setItem(`kbai:doc:${docId}:text`, textContent);
       }
-      
-      // Update state and show success message
+
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: uploadTitle || file.name.replace(/\.[^/.]+$/, ""),
+          type: 'file',
+          source: file.name,
+          content,
+        }),
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const err = await response.json();
+          detail = err?.message || err?.error || JSON.stringify(err);
+        } catch {}
+        throw new Error(`Failed to create document (${response.status}): ${detail}`);
+      }
+      const created: { $id: string; title: string; type: 'file' | 'web'; source: string; lastUpdated: string } = await response.json();
+      const newDoc = { id: created.$id, title: created.title, type: created.type, source: created.source, lastUpdated: created.lastUpdated };
+
       setDocuments(prev => [newDoc, ...prev]);
-      
+
       setUploadTitle("");
       setUploadFileName("");
       setUploadError("");
       setUploadOpen(false);
-      
-      // Reset file input
       if (fileInput) fileInput.value = '';
     } catch (error) {
       console.error('Error uploading file:', error);
@@ -250,15 +240,6 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Search bar */}
-      <div className="relative">
-        <input
-          className="w-full h-12 rounded-lg border border-foreground/10 bg-background pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/50 transition-all"
-          placeholder="Search your knowledge base..."
-          disabled
-        />
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-foreground/50" />
-      </div>
 
       {/* Documents grid */}
       {documents.length > 0 ? (
