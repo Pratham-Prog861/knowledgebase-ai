@@ -1,11 +1,11 @@
 "use client";
-"use client";
 import { useState, useEffect } from "react";
 import { Card } from "@/components/Card";
 import { Modal } from "@/components/Modal";
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { Plus, Upload, Link as LinkIcon, ArrowRight } from "lucide-react";
+import { KnowledgeDocument } from "@/types";
 
 export default function DashboardPage() {
   const { isSignedIn, isLoaded, user } = useUser();
@@ -22,13 +22,7 @@ export default function DashboardPage() {
   const userPlan = "Free";
   
   // Initialize with empty document list
-  const [documents, setDocuments] = useState<Array<{
-    id: string;
-    title: string;
-    type: 'file' | 'web';
-    source: string;
-    lastUpdated: string;
-  }>>([]);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
 
   // Fetch documents from backend when user is authenticated
   useEffect(() => {
@@ -44,15 +38,8 @@ export default function DashboardPage() {
           } catch {}
           throw new Error(`Failed to fetch documents (${res.status}): ${detail}`);
         }
-        const data: Array<{ $id: string; title: string; type: 'file' | 'web'; source: string; lastUpdated: string; }> = await res.json();
-        const mapped = data.map(d => ({
-          id: d.$id,
-          title: d.title,
-          type: d.type,
-          source: d.source,
-          lastUpdated: d.lastUpdated,
-        }));
-        setDocuments(mapped);
+        const data: KnowledgeDocument[] = await res.json();
+        setDocuments(data);
       } catch (error) {
         console.error('Failed to fetch documents:', error);
       }
@@ -123,9 +110,8 @@ export default function DashboardPage() {
         } catch {}
         throw new Error(`Failed to add link (${response.status}): ${detail}`);
       }
-      const created: { $id: string; title: string; type: 'file' | 'web'; source: string; lastUpdated: string } = await response.json();
-      const newDoc = { id: created.$id, title: created.title, type: created.type, source: created.source, lastUpdated: created.lastUpdated };
-      setDocuments(prev => [newDoc, ...prev]);
+      const created: KnowledgeDocument = await response.json();
+      setDocuments(prev => [created, ...prev]);
       setLinkUrl("");
       setLinkError("");
       setLinkOpen(false);
@@ -177,10 +163,8 @@ export default function DashboardPage() {
         } catch {}
         throw new Error(`Failed to create document (${response.status}): ${detail}`);
       }
-      const created: { $id: string; title: string; type: 'file' | 'web'; source: string; lastUpdated: string } = await response.json();
-      const newDoc = { id: created.$id, title: created.title, type: created.type, source: created.source, lastUpdated: created.lastUpdated };
-
-      setDocuments(prev => [newDoc, ...prev]);
+      const created: KnowledgeDocument = await response.json();
+      setDocuments(prev => [created, ...prev]);
 
       setUploadTitle("");
       setUploadFileName("");
@@ -246,7 +230,7 @@ export default function DashboardPage() {
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {documents.map((doc) => (
             <Card 
-              key={doc.id} 
+              key={doc.$id} 
               className="hover:shadow-md transition-shadow h-full flex flex-col"
             >
               <div className="flex justify-between items-start mb-2">
@@ -258,12 +242,12 @@ export default function DashboardPage() {
               <div className="mt-2 text-sm text-foreground/70 flex-1">
                 <p className="truncate mb-2">{doc.source}</p>
                 <p className="text-xs text-foreground/50">
-                  Added {formatDate(doc.lastUpdated)}
+                  Added {formatDate(doc.$updatedAt)}
                 </p>
               </div>
               <div className="mt-4 pt-3 border-t border-foreground/5">
                 <a
-                  href={`/viewer/${doc.id}?title=${encodeURIComponent(doc.title)}&source=${encodeURIComponent(doc.source)}&type=${doc.type}`}
+                  href={`/viewer/${doc.$id}?title=${encodeURIComponent(doc.title)}&source=${encodeURIComponent(doc.source)}&type=${doc.type}`}
                   className="text-sm text-[var(--accent)] hover:underline inline-flex items-center"
                 >
                   View details <ArrowRight className="ml-1 h-3.5 w-3.5" />
