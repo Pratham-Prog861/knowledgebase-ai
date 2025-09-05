@@ -1,46 +1,45 @@
-import { NextResponse } from 'next/server';
+// Create this new file
+import { NextRequest, NextResponse } from 'next/server';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
-
+  
   if (!url) {
-    return NextResponse.json(
-      { error: 'URL parameter is required' },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'URL is required' }, { status: 400 });
   }
-
+  
   try {
-    // Validate URL
-    new URL(url);
-    
-    // In a production environment, you would use a server-side fetch
-    // to avoid CORS issues and to handle the request properly
-    const response = await fetch(url, {
+    const response = await axios.get(url, {
+      timeout: 10000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeBaseAI/1.0; +https://yourdomain.com/bot)'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch URL: ${response.statusText}`);
-    }
-
-    const html = await response.text();
-    const titleMatch = html.match(/<title>(.*?)<\/title>/i);
-    const title = titleMatch ? titleMatch[1] : new URL(url).hostname;
-
+    
+    const $ = cheerio.load(response.data);
+    
+    // Remove unwanted elements
+    $('script, style, nav, header, footer, aside, .advertisement, .ads').remove();
+    
+    // Extract title and main content
+    const title = $('title').text() || $('h1').first().text() || new URL(url).hostname;
+    const content = $('main, article, .content, .post-content, body').first().text()
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 5000); // Limit content length
+    
     return NextResponse.json({
-      url,
       title,
-      content: html, // Return raw HTML for client-side processing
-      fetchedAt: new Date().toISOString()
+      content,
+      url
     });
   } catch (error) {
     console.error('Error fetching URL:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch URL content' },
+      { error: 'Failed to fetch content from URL' }, 
       { status: 500 }
     );
   }

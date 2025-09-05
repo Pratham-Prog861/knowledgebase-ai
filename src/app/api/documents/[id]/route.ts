@@ -125,14 +125,23 @@ export async function DELETE(
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-    // Check if user owns this document
-    const existingDoc = await (databases as any).getRow(
-      DATABASE_ID,
-      DOCUMENTS_TABLE_ID,
-      params.id
-    );
+    // Try to fetch the document
+    let existingDoc;
+    try {
+      existingDoc = await (databases as any).getRow(
+        DATABASE_ID,
+        DOCUMENTS_TABLE_ID,
+        params.id
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('could not be found')) {
+        return new NextResponse("Document not found", { status: 404 });
+      }
+      throw error;
+    }
 
-    if (existingDoc.userId !== userId) {
+    // Check if user owns this document (handle missing userId field)
+    if (existingDoc.userId && existingDoc.userId !== userId) {
       return new NextResponse("Forbidden", { status: 403 });
     }
 
@@ -146,6 +155,17 @@ export async function DELETE(
     return new NextResponse("Document deleted", { status: 200 });
   } catch (error) {
     console.error('Error deleting document:', error);
+    
+    // More specific error handling
+    if (error instanceof Error) {
+      if (error.message.includes('could not be found')) {
+        return new NextResponse("Document not found", { status: 404 });
+      }
+      if (error.message.includes('Permission denied')) {
+        return new NextResponse("Permission denied", { status: 403 });
+      }
+    }
+    
     return new NextResponse("Internal Server Error", { status: 500 });
   }
 }

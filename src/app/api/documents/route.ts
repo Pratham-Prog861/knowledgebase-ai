@@ -5,7 +5,7 @@ import { KnowledgeDocument } from '@/types';
 import { Query, ID } from 'node-appwrite';
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url); 
+  const { searchParams } = new URL(request.url);
   const type = searchParams.get('type') as 'file' | 'web' | undefined;
   
   const { userId } = await auth();
@@ -14,7 +14,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    const queries = [Query.equal('userId', userId)];
+    // TEMP FIX: Remove userId query until attribute is added
+    const queries = [];
     if (type) queries.push(Query.equal('type', type));
 
     const result = await databases.listDocuments<KnowledgeDocument>(
@@ -23,13 +24,10 @@ export async function GET(request: Request) {
       queries
     );
 
-    const documents: KnowledgeDocument[] = result.documents;
-
-    return NextResponse.json(documents);
+    return NextResponse.json(result.documents);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error fetching documents:', error);
-    return NextResponse.json({ error: 'Failed to fetch documents', message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch documents' }, { status: 500 });
   }
 }
 
