@@ -5,28 +5,28 @@ import { Button } from "./Button";
 
 const Navbar = () => {
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-[color:rgba(10,10,10,0.7)] backdrop-blur supports-[backdrop-filter]:bg-[color:rgba(10,10,10,0.5)]">
+    <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
-        <Link href="/" className="font-semibold tracking-tight text-white">
+        <Link href="/" className="font-semibold tracking-tight text-foreground">
           KnowledgeBase AI
         </Link>
         <nav className="hidden sm:flex items-center gap-6 text-sm">
           <SignedIn>
             <Link
               href="/dashboard"
-              className="opacity-80 hover:text-[var(--accent)] transition"
+              className="text-muted-foreground hover:text-accent transition"
             >
               Dashboard
             </Link>
             <Link
               href="/search"
-              className="opacity-80 hover:text-[var(--accent)] transition"
+              className="text-muted-foreground hover:text-accent transition"
             >
               Search
             </Link>
             <Link
               href="/settings"
-              className="opacity-80 hover:text-[var(--accent)] transition"
+              className="text-muted-foreground hover:text-accent transition"
             >
               Settings
             </Link>

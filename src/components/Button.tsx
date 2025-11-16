@@ -10,10 +10,9 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClasses: Record<Variant, string> = {
-  primary: "bg-[var(--accent)] text-black hover:brightness-95",
-  outline:
-    "border border-[color:rgba(242,162,10,0.4)] text-[var(--accent)] hover:bg-[color:rgba(242,162,10,0.08)]",
-  ghost: "text-[var(--accent)] hover:bg-[color:rgba(242,162,10,0.08)]",
+  primary: "bg-accent text-accent-foreground hover:bg-accent/90",
+  outline: "border border-accent/40 text-accent hover:bg-accent/10",
+  ghost: "text-accent hover:bg-accent/10",
 };
 
 const sizeClasses: Record<Size, string> = {

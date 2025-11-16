@@ -59,6 +59,19 @@ export async function POST(req: NextRequest) {
       fileMime?: string;
     };
     
+    // Log incoming request details for debugging
+    console.log('🔍 Chat API Request Debug:', {
+      messageCount: messages?.length || 0,
+      hasContext: !!context,
+      contextTitle: context?.title,
+      contextType: context?.type,
+      contextContentLength: context?.content?.length || 0,
+      documentType,
+      hasFileBase64: !!fileBase64,
+      fileMimeType: fileMime,
+      lastUserMessage: messages[messages.length - 1]?.content
+    });
+    
     const apiKey = process.env.GOOGLE_GENAI_API_KEY;
     
     if (!apiKey) {
@@ -104,6 +117,14 @@ export async function POST(req: NextRequest) {
     const hasPdfFile = fileBase64 && fileMime === 'application/pdf';
     const systemPrompt = getSystemPrompt(documentContext, documentType as 'resume' | 'web', hasPdfFile);
     
+    // Log system prompt and content preparation for debugging
+    console.log('🤖 AI Context Preparation:', {
+      systemPromptLength: systemPrompt.length,
+      hasDocumentContext: !!documentContext,
+      hasPdfFile,
+      documentTypeDetected: documentType
+    });
+    
     // Prepare content for Gemini
     let content: any[] = [];
     
@@ -131,13 +152,26 @@ export async function POST(req: NextRequest) {
     const result = await model.generateContent(content);
     const response = await result.response;
     const text = response.text();
+    
+    // Log successful AI response generation
+    console.log('✅ AI Response Generated:', {
+      responseLength: text.length,
+      responsePreview: text.substring(0, 100) + (text.length > 100 ? '...' : '')
+    });
+    
     return new Response(JSON.stringify({ reply: text }), {
       headers: { 'Content-Type': 'application/json' }
     });
 
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-    console.error('Chat API error:', error);
+    
+    console.error('❌ Chat API Error:', {
+      error: errorMessage,
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
     return new Response(
       JSON.stringify({ 
         error: errorMessage

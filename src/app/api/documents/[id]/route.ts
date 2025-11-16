@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { databasesServer as databases, DATABASE_ID, DOCUMENTS_TABLE_ID } from "@/lib/appwrite-server";
 import { KnowledgeDocument } from "@/types";
+import { Query } from "node-appwrite";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { userId } = await auth();
@@ -14,11 +15,13 @@ export async function GET(
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-    // Fetch row from Appwrite SQL tables
-    const document = await (databases as any).getRow(
+    const { id } = await params;
+
+    // Fetch document from Appwrite
+    const document = await databases.getDocument(
       DATABASE_ID,
       DOCUMENTS_TABLE_ID,
-      params.id
+      id
     );
 
     // Check if user owns this document
@@ -33,10 +36,10 @@ export async function GET(
         if (response.ok) {
           const data = await response.json();
           // Update the document with fetched content
-          await (databases as any).updateRow(
+          await databases.updateDocument(
             DATABASE_ID,
             DOCUMENTS_TABLE_ID,
-            params.id,
+            id,
             {
               content: data.content,
               lastUpdated: new Date().toISOString(),
@@ -74,7 +77,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { userId } = await auth();
@@ -82,14 +85,15 @@ export async function PUT(
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
+    const { id } = await params;
     const body = await request.json();
     const { title, content } = body;
 
     // Check if user owns this document
-    const existingDoc = await (databases as any).getRow(
+    const existingDoc = await databases.getDocument(
       DATABASE_ID,
       DOCUMENTS_TABLE_ID,
-      params.id
+      id
     );
 
     if (existingDoc.userId !== userId) {
@@ -97,10 +101,10 @@ export async function PUT(
     }
 
     // Update document
-    const updatedDocument = await (databases as any).updateRow(
+    const updatedDocument = await databases.updateDocument(
       DATABASE_ID,
       DOCUMENTS_TABLE_ID,
-      params.id,
+      id,
       {
         title: title || existingDoc.title,
         content: content || existingDoc.content,
@@ -117,7 +121,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { userId } = await auth();
@@ -125,13 +129,15 @@ export async function DELETE(
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
+    const { id } = await params;
+
     // Try to fetch the document
     let existingDoc;
     try {
-      existingDoc = await (databases as any).getRow(
+      existingDoc = await databases.getDocument(
         DATABASE_ID,
         DOCUMENTS_TABLE_ID,
-        params.id
+        id
       );
     } catch (error) {
       if (error instanceof Error && error.message.includes('could not be found')) {
@@ -146,10 +152,10 @@ export async function DELETE(
     }
 
     // Delete document
-    await (databases as any).deleteRow(
+    await databases.deleteDocument(
       DATABASE_ID,
       DOCUMENTS_TABLE_ID,
-      params.id
+      id
     );
 
     return new NextResponse("Document deleted", { status: 200 });

@@ -1,11 +1,13 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 import { useState, useEffect } from "react";
 import { Card } from "@/components/Card";
 import { Modal } from "@/components/Modal";
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
-import { Plus, Upload, Link as LinkIcon, ArrowRight, Trash2 } from "lucide-react";
+import { Plus, Upload, Link as LinkIcon, ArrowRight, CheckCircle, XCircle } from "lucide-react";
 import { KnowledgeDocument } from "@/types";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { ChatPanel } from "@/components/ChatPanel";
 
 export default function DashboardPage() {
@@ -16,7 +18,7 @@ export default function DashboardPage() {
   const [linkUrl, setLinkUrl] = useState("");
   const [linkError, setLinkError] = useState("");
   const [uploadTitle, setUploadTitle] = useState("");
-  const [uploadFileName, setUploadFileName] = useState("");
+  const [ , setUploadFileName] = useState("");
   const [uploadError, setUploadError] = useState("");
 
   // User plan - default to Free
@@ -28,6 +30,22 @@ export default function DashboardPage() {
   // State variables for quick chat
   const [showQuickChat, setShowQuickChat] = useState(false);
   const [uploadedDocument, setUploadedDocument] = useState<KnowledgeDocument | null>(null);
+  
+  // Toast notification state
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'success' | 'error';
+  } | null>(null);
+  
+  // Auto-hide toast after 3 seconds
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => {
+        setToast(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   // Fetch documents from backend when user is authenticated
   useEffect(() => {
@@ -93,46 +111,55 @@ export default function DashboardPage() {
       minute: "2-digit",
     });
   };
+
   const handleDelete = async (documentId: string) => {
-  if (!confirm("Are you sure you want to delete this document?")) {
-    return;
-  }
+    try {
+      const response = await fetch(`/api/documents/${documentId}`, {
+        method: "DELETE",
+      });
 
-  try {
-    const response = await fetch(`/api/documents/${documentId}`, {
-      method: "DELETE",
-    });
+      if (!response.ok) {
+        let errorMessage = `Failed to delete document (${response.status})`;
+        try {
+          const errorData = await response.text();
+          errorMessage = errorData || errorMessage;
+        } catch {}
+        
+        if (response.status === 404) {
+          setToast({
+            message: "Document not found. It may have already been deleted.",
+            type: 'error'
+          });
+          // Remove from local state anyway
+          setDocuments((prev) => prev.filter((doc) => doc.$id !== documentId));
+          return;
+        }
+        
+        if (response.status === 403) {
+          setToast({
+            message: "You don't have permission to delete this document.",
+            type: 'error'
+          });
+          return;
+        }
+        
+        throw new Error(errorMessage);
+      }
 
-    if (!response.ok) {
-      let errorMessage = `Failed to delete document (${response.status})`;
-      try {
-        const errorData = await response.text();
-        errorMessage = errorData || errorMessage;
-      } catch {}
-      
-      if (response.status === 404) {
-        alert("Document not found. It may have already been deleted.");
-        // Remove from local state anyway
-        setDocuments((prev) => prev.filter((doc) => doc.$id !== documentId));
-        return;
-      }
-      
-      if (response.status === 403) {
-        alert("You don't have permission to delete this document.");
-        return;
-      }
-      
-      throw new Error(errorMessage);
+      // Remove the document from the state
+      setDocuments((prev) => prev.filter((doc) => doc.$id !== documentId));
+      setToast({
+        message: "Document deleted successfully!",
+        type: 'success'
+      });
+    } catch (error) {
+      console.error("Error deleting document:", error);
+      setToast({
+        message: "Failed to delete document. Please try again.",
+        type: 'error'
+      });
     }
-
-    // Remove the document from the state
-    setDocuments((prev) => prev.filter((doc) => doc.$id !== documentId));
-    alert("Document deleted successfully!");
-  } catch (error) {
-    console.error("Error deleting document:", error);
-    alert("Failed to delete document. Please try again.");
-  }
-};
+  };
 
   // Handle adding a new web link (persist to backend)
   const handleAddLink = async (e: React.FormEvent) => {
@@ -147,13 +174,44 @@ export default function DashboardPage() {
       const url = new URL(linkUrl);
       
       // Extract content from the web page
+      console.log('Fetching content for URL:', linkUrl);
       const contentResponse = await fetch(`/api/fetch-url?url=${encodeURIComponent(linkUrl)}`);
+      
       if (!contentResponse.ok) {
-        throw new Error('Failed to fetch URL content');
+        const errorText = await contentResponse.text();
+        console.error('Failed to fetch URL content:', errorText);
+        throw new Error(`Failed to fetch URL content: ${contentResponse.status}`);
       }
       
-      const { title, content } = await contentResponse.json();
+      const responseData = await contentResponse.json();
+      console.log('Received content data:', {
+        title: responseData.title,
+        contentLength: responseData.content?.length || 0,
+        hasWarning: !!responseData.warning
+      });
+      
+      const { title, content, description, warning } = responseData;
+      
+      // Show warning if content extraction had issues
+      if (warning) {
+        setLinkError(`Warning: ${warning}`);
+        // Clear error after 5 seconds to allow user to continue
+        setTimeout(() => setLinkError(''), 5000);
+      }
   
+      // Prepare content for storage
+      let finalContent = content || '';
+      if (description && description.trim()) {
+        finalContent = `${description}\n\n${finalContent}`;
+      }
+      
+      // Ensure we have some content to store
+      if (!finalContent.trim()) {
+        finalContent = `Web page: ${title}\nURL: ${linkUrl}\n\n[Content could not be extracted automatically. Please visit the URL directly to view the content.]`;
+      }
+      
+      console.log('Creating document with content length:', finalContent.length);
+      
       // Create document with extracted content
       const response = await fetch("/api/documents", {
         method: "POST",
@@ -162,7 +220,7 @@ export default function DashboardPage() {
           title: title || url.hostname,
           type: "web",
           source: linkUrl,
-          content: content || "",
+          content: finalContent,
         }),
       });
   
@@ -212,6 +270,7 @@ export default function DashboardPage() {
 
     try {
       let content = "";
+      let extractData: any = null; // Declare extractData in the outer scope
 
       // Handle PDF files using server-side processing
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf')) {
@@ -224,11 +283,19 @@ export default function DashboardPage() {
         });
 
         if (!extractResponse.ok) {
-          throw new Error('Failed to extract PDF content');
+          const errorText = await extractResponse.text();
+          console.error('PDF extraction failed:', errorText);
+          throw new Error(`Failed to extract PDF content: ${extractResponse.status} - ${errorText}`);
         }
 
-        const extractData = await extractResponse.json();
+        extractData = await extractResponse.json(); // Assign to the outer scope variable
         content = extractData.text;
+        
+        console.log('PDF upload response:', {
+          hasBase64: !!extractData.base64Data,
+          fileName: extractData.fileName,
+          fileSize: extractData.fileSize
+        });
       } 
       // Handle text files directly
       else if (file.type.includes('text') || file.name.endsWith('.txt') || file.name.endsWith('.md')) {
@@ -243,16 +310,39 @@ export default function DashboardPage() {
         return;
       }
 
+      // Prepare document data
+      const documentData: any = {
+        title: uploadTitle,
+        type: 'file',
+        source: file.name,
+        content: content,
+      };
+      
+      // For PDF files, embed the base64 data in the content for AI processing
+      if (extractData && extractData.base64Data) {
+        documentData.content = JSON.stringify({
+          type: 'pdf',
+          textContent: content,
+          fileData: {
+            base64: extractData.base64Data,
+            mimeType: extractData.mimeType,
+            fileName: extractData.fileName,
+            fileSize: extractData.fileSize
+          }
+        });
+        console.log('Storing PDF with embedded base64 data');
+      }
+      
+      console.log('Creating document with PDF data:', {
+        title: documentData.title,
+        hasFileData: !!documentData.fileData
+      });
+      
       // Create document with extracted content
       const response = await fetch('/api/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: uploadTitle,
-          type: 'file',
-          source: file.name,
-          content: content,
-        }),
+        body: JSON.stringify(documentData),
       });
 
       if (!response.ok) {
@@ -304,7 +394,7 @@ export default function DashboardPage() {
           <div className="flex flex-wrap gap-2 w-full sm:w-auto">
             <button
               onClick={() => setUploadOpen(true)}
-              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-[var(--accent)] text-black text-sm font-medium hover:brightness-95 transition-colors w-full sm:w-auto justify-center"
+              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-accent text-accent-foreground text-sm font-medium hover:bg-accent/90 transition-colors w-full sm:w-auto justify-center"
             >
               <Upload className="h-4 w-4" />
               Upload File
@@ -349,13 +439,12 @@ export default function DashboardPage() {
                     <span className="text-xs px-2 py-1 rounded-full bg-foreground/5 text-foreground/70">
                       {doc.type === "file" ? "File" : "Link"}
                     </span>
-                    <button
-                      onClick={() => handleDelete(doc.$id)}
-                      className="text-foreground/50 hover:text-red-500 transition-colors p-1"
-                      title="Delete document"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <DeleteConfirmDialog
+                      title="Document"
+                      onConfirm={() => handleDelete(doc.$id)}
+                      triggerVariant="ghost"
+                      triggerClassName="text-foreground/50 hover:text-red-500 transition-colors p-1 h-8 w-8"
+                    />
                   </div>
                 </div>
                 <div className="mt-2 text-sm text-foreground/70 flex-1">
@@ -363,22 +452,52 @@ export default function DashboardPage() {
                   <p className="text-xs text-foreground/50">
                     Added {formatDate(doc.$updatedAt)}
                   </p>
+                  {/* Debug info for PDF files */}
+                  {doc.content && (() => {
+                    try {
+                      // Only attempt JSON parsing if content looks like JSON (starts with { or [)
+                      const trimmedContent = doc.content.trim();
+                      if (trimmedContent.startsWith('{') || trimmedContent.startsWith('[')) {
+                        const parsed = JSON.parse(doc.content);
+                        if (parsed.type === 'pdf') {
+                          return (
+                            <p className="text-xs text-accent mt-1">
+                              📄 PDF with {Math.round(parsed.fileData?.base64?.length / 1024)}KB data
+                            </p>
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      // Silently ignore JSON parsing errors for non-JSON content
+                      // This is expected for plain text documents
+                    }
+                    return null;
+                  })()} 
                 </div>
-                <div className="mt-4 pt-3 border-t border-foreground/5">
+                <div className="mt-4 pt-3 border-t border-foreground/5 flex justify-between items-center">
                   <a
                     href={`/viewer/${doc.$id}?title=${encodeURIComponent(
                       doc.title
                     )}&source=${encodeURIComponent(doc.source)}&type=${doc.type}`}
-                    className="text-sm text-[var(--accent)] hover:underline inline-flex items-center"
+                    className="text-sm text-accent hover:underline inline-flex items-center font-medium"
                   >
                     View details <ArrowRight className="ml-1 h-3.5 w-3.5" />
                   </a>
+                  <button
+                    onClick={() => {
+                      setUploadedDocument(doc);
+                      setShowQuickChat(true);
+                    }}
+                    className="text-xs px-2 py-1 bg-accent/10 hover:bg-accent/20 text-accent rounded-md transition-colors flex items-center gap-1"
+                  >
+                    💬 Chat
+                  </button>
                 </div>
               </Card>
             ))}
           </div>
         ) : (
-          <Card className="text-center py-12">
+          <Card className="text-center py-12 mt-6">
             <div className="mx-auto w-14 h-14 rounded-full bg-foreground/5 flex items-center justify-center mb-4">
               <Plus className="h-6 w-6 text-foreground/40" />
             </div>
@@ -392,7 +511,7 @@ export default function DashboardPage() {
             <div className="flex flex-wrap gap-3 justify-center">
               <button
                 onClick={() => setUploadOpen(true)}
-                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--accent)] text-black text-sm font-medium hover:brightness-95"
+                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-accent text-accent-foreground text-sm font-medium hover:bg-accent/90 transition-colors"
               >
                 <Upload className="h-3.5 w-3.5" />
                 Upload File
@@ -407,6 +526,35 @@ export default function DashboardPage() {
             </div>
           </Card>
         )}
+        
+        {/* Quick Chat Panel */}
+        {showQuickChat && uploadedDocument && (
+          <div className="mt-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Chat about your document</h2>
+              <button
+                onClick={() => {
+                  setShowQuickChat(false);
+                  setUploadedDocument(null);
+                }}
+                className="text-foreground/60 hover:text-foreground transition-colors"
+              >
+                ×
+              </button>
+            </div>
+            <div className="h-96 bg-card rounded-lg border border-border">
+              <ChatPanel 
+                document={{
+                  id: uploadedDocument.$id,
+                  title: uploadedDocument.title,
+                  type: uploadedDocument.type,
+                  source: uploadedDocument.source
+                }}
+              />
+            </div>
+          </div>
+        )}
+        
         <Modal open={isUploadOpen} onClose={() => setUploadOpen(false)} title="Upload Document">
           <div className="p-6">
             <form onSubmit={handleFileUpload} className="space-y-4">
@@ -442,7 +590,7 @@ export default function DashboardPage() {
               <div className="flex gap-3">
                 <button
                   type="submit"
-                  className="flex-1 bg-[var(--accent)] text-white px-4 py-2 rounded-lg font-medium hover:bg-[var(--accent)]/90 transition-colors"
+                  className="flex-1 bg-accent text-accent-foreground px-4 py-2 rounded-lg font-medium hover:bg-accent/90 transition-colors"
                 >
                   Upload
                 </button>
@@ -480,7 +628,7 @@ export default function DashboardPage() {
               <div className="flex gap-3">
                 <button
                   type="submit"
-                  className="flex-1 bg-[var(--accent)] text-white px-4 py-2 rounded-lg font-medium hover:bg-[var(--accent)]/90 transition-colors"
+                  className="flex-1 bg-accent text-accent-foreground px-4 py-2 rounded-lg font-medium hover:bg-accent/90 transition-colors"
                 >
                   Add Link
                 </button>
@@ -495,6 +643,30 @@ export default function DashboardPage() {
             </form>
           </div>
         </Modal>
+
+        {/* Toast Notification */}
+        {toast && (
+          <div className="fixed bottom-4 right-4 z-50">
+            <div className={`flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg border ${
+              toast.type === 'success' 
+                ? 'bg-accent/10 border-accent/20 text-accent-foreground' 
+                : 'bg-destructive/10 border-destructive/20 text-destructive'
+            }`}>
+              {toast.type === 'success' ? (
+                <CheckCircle className="h-4 w-4 text-accent" />
+              ) : (
+                <XCircle className="h-4 w-4 text-destructive" />
+              )}
+              <span className="text-sm text-white font-medium">{toast.message}</span>
+              <button
+                onClick={() => setToast(null)}
+                className="ml-2 text-gray-400 hover:text-gray-600"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

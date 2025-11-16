@@ -32,6 +32,12 @@ export default function SearchPage() {
   const [query, setQuery] = useState<string>("");
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationHistory, setConversationHistory] = useState<Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: string;
+  }>>([]);
   
   // Function to extract main content from HTML
   const extractMainContent = (html: string): string => {
@@ -153,6 +159,17 @@ export default function SearchPage() {
         
         const data: SearchResults = await response.json();
         setSearchResults(data);
+        
+        // Add to conversation history
+        const newMessages = [
+          ...conversationHistory,
+          { role: 'user' as const, content: value, timestamp: new Date().toISOString() },
+          { role: 'assistant' as const, content: data.answer, timestamp: new Date().toISOString() }
+        ];
+        setConversationHistory(newMessages);
+        
+        // Save conversation to backend (without blocking the UI)
+        saveConversation(value, data.answer).catch(console.error);
       }
     } catch (error) {
       console.error('Search error:', error);
@@ -163,7 +180,27 @@ export default function SearchPage() {
     } finally {
       setIsSearching(false);
     }
-  }
+  };
+  
+  // Save conversation to backend
+  const saveConversation = async (message: string, response: string) => {
+    try {
+      const res = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId,
+          message,
+          response
+        })
+      });
+      if (!res.ok) {
+        console.warn('Conversation save failed with status:', res.status);
+      }
+    } catch (error) {
+      console.warn('Failed to save conversation (non-critical):', error);
+    }
+  };
   
   // Generate a response about services based on the fetched content
   const generateServiceResponse = (sources: Source[]): string => {
@@ -223,7 +260,9 @@ export default function SearchPage() {
         <h1 className="text-xl font-semibold">Search</h1>
         <SearchBox
           onSubmit={handleSubmit}
-          placeholder="Ask anything about your knowledge base..."
+          placeholder={conversationHistory.length > 0 
+            ? "Ask a follow-up question..." 
+            : "Ask anything about your knowledge base..."}
         />
 
         {isSearching ? (
@@ -231,22 +270,29 @@ export default function SearchPage() {
             <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)] mb-4" />
             <p className="text-foreground/70">Searching your knowledge base...</p>
           </div>
-        ) : searchResults ? (
+        ) : conversationHistory.length > 0 ? (
           <div className="space-y-6">
-            <Card className="lg:col-span-2" title="Search Results">
-              <div className="space-y-4">
-                <div className="p-4 bg-foreground/5 rounded-lg">
-                  <p className="text-sm font-medium text-foreground/70 mb-1">Your question:</p>
-                  <p className="text-foreground">&ldquo;{query}&rdquo;</p>
-                </div>
-                <div className="p-4 bg-foreground/5 rounded-lg">
-                  <p className="text-sm font-medium text-foreground/70 mb-2">AI Response:</p>
-                  <p className="text-base leading-7">{searchResults.answer}</p>
-                </div>
+            <Card className="lg:col-span-2" title="Conversation">
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {conversationHistory.map((message, index) => (
+                  <div key={index} className={`p-4 rounded-lg ${
+                    message.role === 'user' 
+                      ? 'bg-accent/10 ml-8' 
+                      : 'bg-foreground/5 mr-8'
+                  }`}>
+                    <p className="text-sm font-medium text-foreground/70 mb-1">
+                      {message.role === 'user' ? 'You' : 'AI Assistant'}:
+                    </p>
+                    <p className="text-base leading-7 whitespace-pre-wrap">{message.content}</p>
+                    <p className="text-xs text-foreground/50 mt-2">
+                      {new Date(message.timestamp).toLocaleTimeString()}
+                    </p>
+                  </div>
+                ))}
               </div>
             </Card>
             
-            {searchResults.sources.length > 0 && (
+            {searchResults && searchResults.sources.length > 0 && (
               <Card title="Sources">
                 <div className="space-y-3">
                   {searchResults.sources.map((source, index) => (
@@ -255,7 +301,7 @@ export default function SearchPage() {
                         href={source.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm font-medium text-foreground hover:text-[var(--accent)] flex items-center gap-1"
+                        className="text-sm font-medium text-foreground hover:text-accent flex items-center gap-1"
                       >
                         {source.title}
                         <ExternalLink className="h-3 w-3 ml-1 opacity-70" />
@@ -271,11 +317,15 @@ export default function SearchPage() {
             
             <div className="text-center">
               <button
-                onClick={() => setSearchResults(null)}
+                onClick={() => {
+                  setConversationHistory([]);
+                  setSearchResults(null);
+                  setConversationId(null);
+                }}
                 className="inline-flex items-center text-sm text-foreground/70 hover:text-foreground transition-colors"
               >
                 <Search className="h-4 w-4 mr-1.5" />
-                New search
+                New conversation
               </button>
             </div>
           </div>

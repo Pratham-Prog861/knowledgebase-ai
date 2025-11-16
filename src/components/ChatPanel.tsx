@@ -55,6 +55,8 @@ export function ChatPanel({
   const [documentContent, setDocumentContent] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   
+  const [documentFileData, setDocumentFileData] = useState<any>(null);
+  
   // Load document content if document ID is provided
   useEffect(() => {
     const loadDocumentContent = async () => {
@@ -64,7 +66,27 @@ export function ChatPanel({
         const response = await fetch(`/api/documents/${document.id}`);
         if (response.ok) {
           const data = await response.json();
-          setDocumentContent(data.content || null);
+          
+          let textContent = data.content || null;
+          let fileData = null;
+          
+          // Check if content contains embedded PDF data
+          if (data.content) {
+            try {
+              const parsed = JSON.parse(data.content);
+              if (parsed.type === 'pdf' && parsed.fileData) {
+                textContent = parsed.textContent || '';
+                fileData = parsed.fileData;
+                console.log('Loaded embedded PDF file data for document:', data.title);
+              }
+            } catch (e) {
+              // Not JSON, treat as regular text content
+              textContent = data.content;
+            }
+          }
+          
+          setDocumentContent(textContent);
+          setDocumentFileData(fileData);
         }
       } catch (error) {
         console.error('Error loading document content:', error);
@@ -105,8 +127,35 @@ export function ChatPanel({
       let context = null;
       let documentType = 'general';
       
-      if (contextTitle) {
-        // Extract title and content from contextTitle
+      if (document) {
+        // Prioritize document prop over contextTitle for better data accuracy
+        let content = documentContent || '';
+        
+        // If we have contextTitle with content, use it as it may have more detailed content
+        if (contextTitle && contextTitle.includes('\n\n')) {
+          const lines = contextTitle.split('\n');
+          const contextContent = lines.slice(2).join('\n');
+          if (contextContent && contextContent.length > content.length) {
+            content = contextContent;
+          }
+        }
+        
+        context = {
+          title: document.title,
+          type: document.type,
+          content: content,
+          source: document.source
+        };
+        documentType = document.type;
+        
+        console.log('Using document-based context:', {
+          title: document.title,
+          type: document.type,
+          contentLength: content.length,
+          source: document.source
+        });
+      } else if (contextTitle) {
+        // Fallback to contextTitle only if no document prop is provided
         const lines = contextTitle.split('\n');
         const title = lines[0] || 'Document';
         const content = lines.slice(2).join('\n') || contextTitle;
@@ -118,31 +167,59 @@ export function ChatPanel({
           source: 'Uploaded content'
         };
         documentType = fileBase64 ? 'file' : 'web';
-      } else if (document) {
-        context = {
-          title: document.title,
-          type: document.type,
-          content: documentContent || '',
-          source: document.source
-        };
-        documentType = document.type;
+        
+        console.log('Using contextTitle-based context:', {
+          title,
+          contentLength: content.length,
+          type: documentType
+        });
       }
 
+      // Prepare file data for AI analysis
+      let finalFileBase64 = fileBase64;
+      let finalFileMime = fileMime;
+      
+      // If we have document file data (PDF), use it
+      if (documentFileData && documentFileData.mimeType === 'application/pdf') {
+        finalFileBase64 = documentFileData.base64;
+        finalFileMime = documentFileData.mimeType;
+        console.log('Using PDF file data from document for AI analysis:', {
+          fileName: documentFileData.fileName,
+          base64Length: documentFileData.base64?.length,
+          mimeType: documentFileData.mimeType
+        });
+      } else {
+        console.log('No PDF file data found in document for AI analysis');
+      }
+      
+      const requestData = {
+        messages: [
+          ...messages,
+          { role: 'user' as const, content: input }
+        ],
+        context,
+        documentType,
+        fileBase64: finalFileBase64,
+        fileMime: finalFileMime
+      };
+      
+      console.log('Sending chat request:', {
+        messageCount: requestData.messages.length,
+        hasContext: !!context,
+        contextTitle: context?.title,
+        contextContentLength: context?.content?.length || 0,
+        documentType,
+        hasFileBase64: !!finalFileBase64,
+        fileMimeType: finalFileMime,
+        userQuestion: input
+      });
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          messages: [
-            ...messages,
-            { role: 'user' as const, content: input }
-          ],
-          context,
-          documentType,
-          fileBase64,
-          fileMime
-        }),
+        body: JSON.stringify(requestData),
       });
       
       if (!response.ok) {
@@ -151,10 +228,21 @@ export function ChatPanel({
       }
       
       const data = await response.json();
+      
+      let replyContent = data.reply;
+      
+      if (!replyContent || replyContent.trim().length === 0) {
+        replyContent = "I apologize, but I wasn't able to generate a response to your question. This could be due to:\n\n" +
+                      "• The document content might not be fully processed yet\n" +
+                      "• Your question might be outside the scope of the uploaded content\n" +
+                      "• There might be a temporary issue with the AI service\n\n" +
+                      "Please try rephrasing your question or wait a moment and try again.";
+      }
+      
       const reply: Message = {
         id: `m-${Date.now()}-a`,
         role: "assistant",
-        content: data.reply || "I'm not sure how to respond to that.",
+        content: replyContent,
         timestamp: new Date(),
       };
       

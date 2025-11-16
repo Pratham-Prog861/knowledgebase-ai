@@ -39,11 +39,23 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { title, type, source, content } = body as { title: string; type: 'file' | 'web'; source: string; content?: string };
+    const { title, type, source, content } = body as { 
+      title: string; 
+      type: 'file' | 'web'; 
+      source: string; 
+      content?: string;
+    };
 
     if (!title || !type || !source) {
       return NextResponse.json({ error: 'Missing required fields: title, type, source' }, { status: 400 });
     }
+
+    console.log('Creating document:', {
+      title,
+      type,
+      hasContent: !!content,
+      contentLength: content ? content.length : 0
+    });
 
     const created = await databases.createDocument<KnowledgeDocument>(
       DATABASE_ID,
